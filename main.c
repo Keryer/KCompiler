@@ -5,7 +5,7 @@
 #include "helpers/vector.h"
 #include "compiler.h"
 int main() {
-
+    // 打开test.c文件，然后编译它
     int res = compile_file("./test.c", "test", 0);
     if(res == COMPILER_FILE_COMPILED_OK)
     {
