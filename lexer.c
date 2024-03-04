@@ -6,6 +6,7 @@
 #include "helpers/vector.h"
 #include "helpers/buffer.h"
 #include <assert.h>
+#include <ctype.h>
 
 // 如果exp的表达式的值为真，那么就执行buffer_write(buffer, c)和nextc()
 // 即将c写入buffer，然后读取下一个字符
@@ -309,33 +310,135 @@ bool lex_is_in_expression() {
     return lex_process->current_expression_count > 0;
 }
 
+
+bool is_keyword(const char *str) {
+    return S_EQ(str, "unsigned") ||
+           S_EQ(str, "signed") ||
+           S_EQ(str, "char") ||
+           S_EQ(str, "short") ||
+           S_EQ(str, "int") ||
+           S_EQ(str, "long") ||
+           S_EQ(str, "float") ||
+           S_EQ(str, "double") ||
+           S_EQ(str, "void") ||
+           S_EQ(str, "struct") ||
+           S_EQ(str, "enum") ||
+           S_EQ(str, "union") ||
+           S_EQ(str, "typedef") ||
+           S_EQ(str, "const") ||
+           S_EQ(str, "volatile") ||
+           S_EQ(str, "extern") ||
+           S_EQ(str, "static") ||
+           S_EQ(str, "__ignore_typecheck") ||
+           S_EQ(str, "return") ||
+           S_EQ(str, "include") ||
+           S_EQ(str, "if") ||
+           S_EQ(str, "else") ||
+           S_EQ(str, "while") ||
+           S_EQ(str, "for") ||
+           S_EQ(str, "do") ||
+           S_EQ(str, "break") ||
+           S_EQ(str, "continue") ||
+           S_EQ(str, "switch") ||
+           S_EQ(str, "case") ||
+           S_EQ(str, "default") ||
+           S_EQ(str, "goto") ||
+           S_EQ(str, "auto") ||
+           S_EQ(str, "register") ||
+           S_EQ(str, "restrict") ||
+           S_EQ(str, "inline") ||
+           S_EQ(str, "virtual") ||
+           S_EQ(str, "explicit") ||
+           S_EQ(str, "friend") ||
+           S_EQ(str, "constexpr") ||
+           S_EQ(str, "mutable") ||
+           S_EQ(str, "operator") ||
+           S_EQ(str, "this") ||
+           S_EQ(str, "sizeof") ||
+           S_EQ(str, "alignof") ||
+           S_EQ(str, "decltype") ||
+           S_EQ(str, "nullptr") ||
+           S_EQ(str, "true") ||
+           S_EQ(str, "false") ||
+           S_EQ(str, "bool");
+}
+
 /**
  * 读取一个新的表达式
  * @return
  */
 static struct token *token_make_operator_or_string() {
     char op = peekc();
-    if (op == '<')
-    {
-        struct token* last_token = lexer_last_token();
-        if (token_is_keyword(last_token, "include"))
-        {
+    if (op == '<') {
+        struct token *last_token = lexer_last_token();
+        if (token_is_keyword(last_token, "include")) {
             return token_make_string('<', '>');
         }
     }
 
-    struct token* token = token_create(&(struct token) {
+    struct token *token = token_create(&(struct token) {
             .type = TOKEN_TYPE_OPERATOR,
             .sval = read_op()
     });
 
     if (op == '(')
-    // 如果是一个表达式
+        // 如果是一个表达式
     {
         lex_new_expression();
-
     }
     return token;
+}
+
+
+struct token *token_make_one_line_comment() {
+    struct buffer *buffer = buffer_create();
+    char c = 0;
+    LEX_GETC_IF(buffer, c, c != '\n' && c != EOF);
+    buffer_write(buffer, 0x00);
+    return token_create(&(struct token) {
+            .type = TOKEN_TYPE_COMMENT,
+            .sval = buffer_ptr(buffer)
+    });
+}
+
+
+struct token *token_make_multiline_comment() {
+    struct buffer *buffer = buffer_create();
+    char c = 0;
+    while (true) {
+        LEX_GETC_IF(buffer, c, c != '*' && c != EOF);
+        if (c == EOF) {
+            compiler_error(lex_process->compiler, "You did not close this multiline comment.\n");
+        } else if (c == '*') {
+            // 跳过星号
+            nextc();
+            if (peekc() == '/') {
+                nextc();
+                break;
+            }
+        }
+    }
+    return token_create(&(struct token) {
+            .type = TOKEN_TYPE_COMMENT,
+            .sval = buffer_ptr(buffer)
+    });
+}
+
+
+struct token *handle_comment() {
+    char c = peekc();
+    if (c == '/') {
+        nextc();
+        if (peekc() == '/') {
+            return token_make_one_line_comment();
+        } else if (peekc() == '*') {
+            nextc();
+            return token_make_multiline_comment();
+        }
+        pushc('/');
+        return token_make_operator_or_string();
+    }
+    return NULL;
 }
 
 /**
@@ -344,16 +447,58 @@ static struct token *token_make_operator_or_string() {
  */
 static struct token *token_make_symbol() {
     char c = nextc();
-    if (c == ')')
-    {
+    if (c == ')') {
         lex_finish_expression();
     }
-    struct token* token = token_create(&(struct token) {
+    struct token *token = token_create(&(struct token) {
             .type = TOKEN_TYPE_SYMBOL,
             .cval = c
     });
     return token;
 }
+
+
+static struct token *token_make_identifier_or_keyword() {
+    struct buffer *buffer = buffer_create();
+    char c = 0;
+    LEX_GETC_IF(buffer, c, (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_');
+    buffer_write(buffer, 0x00);
+    if (is_keyword(buffer_ptr(buffer))) {
+        // 关键字检测
+        return token_create(&(struct token) {
+                .type = TOKEN_TYPE_KEYWORD,
+                .sval = buffer_ptr(buffer)
+        });
+    }
+    return token_create(&(struct token) {
+            .type = TOKEN_TYPE_IDENTIFIER,
+            .sval = buffer_ptr(buffer)
+    });
+}
+
+/**
+ * 检测标识符是否是以字母或_开头
+ * @return
+ */
+struct token *read_special_token() {
+    char c = peekc();
+    if (isalpha(c) || c == '_') {
+        return token_make_identifier_or_keyword();
+    }
+    return NULL;
+}
+
+/**
+ * 创建一个换行符token结构体
+ * @return
+ */
+struct token *token_make_newline() {
+    nextc();
+    return token_create(&(struct token) {
+            .type = TOKEN_TYPE_NEWLINE
+    });
+}
+
 
 /**
  * 从文件中读取下一个token
@@ -362,6 +507,10 @@ static struct token *token_make_symbol() {
 struct token *read_next_token() {
     struct token *token = NULL;
     char c = peekc();
+    token = handle_comment();
+    if (token) {
+        return token;
+    }
     switch (c) {
         NUMERIC_CASE:
             // 读取到了数字
@@ -388,13 +537,16 @@ struct token *read_next_token() {
             // 略过空格和制表符
             token = handle_whitespace();
             break;
-
+        case '\n':
+            token = token_make_newline();
+            break;
         case EOF:
             //完成了词法分析
             break;
 
         default:
-            compiler_error(lex_process->compiler, "Unexpected token\n");
+            token = read_special_token();
+            if (!token) { compiler_error(lex_process->compiler, "Unexpected token\n"); }
     }
     return token;
 }
