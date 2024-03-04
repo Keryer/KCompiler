@@ -1,5 +1,5 @@
 /build
 /.idea
 /.git
-/test
-/test.c
+test
+test.c
