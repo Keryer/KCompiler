@@ -7,7 +7,10 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
+#define S_EQ(str, str2) \
+        (str && str2 && (strcmp(str, str2) == 0))
 /**
  * 位置结构体
  * line: 行
@@ -35,6 +38,36 @@ struct pos
     case '7':        \
     case '8':        \
     case '9'
+
+#define OPERATOR_CASE_EXCLUDING_DIVISION \
+    case '+':                            \
+    case '-':                            \
+    case '*':                            \
+    case '%':                            \
+    case '=':                            \
+    case '!':                            \
+    case '~':                            \
+    case '&':                            \
+    case '|':                            \
+    case '^':                            \
+    case '<':                            \
+    case '>':                            \
+    case '(':                            \
+    case '[':                            \
+    case ',':                            \
+    case '.':                            \
+    case '?'
+
+
+#define SYMBOL_CASE \
+    case '{':       \
+    case ';':       \
+    case ':':       \
+    case ']':       \
+    case '}':       \
+    case ')':       \
+    case '#':       \
+    case '\\'
 
 /**
  * 词法分析的结果枚举
@@ -193,24 +226,40 @@ struct compile_process
 };
 
 /***********************************************************************************************************************
- * 词法分析函数声明
+ * 函数声明
  **********************************************************************************************************************/
 
+/***********************************************************************************************************************
+ * 编译过程函数声明
+ **********************************************************************************************************************/
 int compile_file(const char* file_name, const char* out_filename, int flags);
 struct compile_process* compile_process_create(const char* filename, const char* out_filename, int flags);
 
+/***********************************************************************************************************************
+ * 字符操作函数声明
+ **********************************************************************************************************************/
 char compile_process_next_char(struct lex_process* lex_process);
 char compile_process_peek_char(struct lex_process* lex_process);
 void compile_process_push_char(struct lex_process* lex_process, char c);
 
+/***********************************************************************************************************************
+ * 编译结果函数声明
+ **********************************************************************************************************************/
 void compiler_error(struct compile_process* compiler, const char* msg, ...);
 void compiler_warning(struct compile_process* compiler, const char* msg, ...);
 
+/***********************************************************************************************************************
+ * 词法分析函数声明
+ **********************************************************************************************************************/
 struct lex_process* lex_process_create(struct compile_process* compiler, struct lex_process_functions* functions, void* private);
 void lex_process_free(struct lex_process* process);
 void* lex_process_private(struct lex_process* process);
 struct vector* lex_process_tokens(struct lex_process* process);
 int lex(struct lex_process* process);
 
+/***********************************************************************************************************************
+ * token函数声明
+ **********************************************************************************************************************/
+bool token_is_keyword(struct token* token, const char* value);
 
 #endif //KCOMPILER_COMPILER_H
