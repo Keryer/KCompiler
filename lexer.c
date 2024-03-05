@@ -19,6 +19,8 @@
 
 struct token *read_next_token();
 
+bool lex_is_in_expression();
+
 static struct lex_process *lex_process;
 static struct token tmp_token;
 
@@ -36,6 +38,9 @@ static char peekc() {
  */
 static char nextc() {
     char c = lex_process->function->next_char(lex_process);
+    if (lex_is_in_expression()) {
+        buffer_write(lex_process->parentheses_buffer, c);
+    }
     lex_process->pos.col++;
     if (c == '\n') {
         lex_process->pos.line++;
@@ -50,6 +55,13 @@ static char nextc() {
  */
 static void pushc(char c) {
     lex_process->function->push_char(lex_process, c);
+}
+
+
+static char assert_next_char(char c) {
+    char next_c = nextc();
+    assert(c == next_c);
+    return next_c;
 }
 
 /**
@@ -68,6 +80,9 @@ static struct pos lex_file_position() {
 struct token *token_create(struct token *_token) {
     memcpy(&tmp_token, _token, sizeof(struct token));
     tmp_token.pos = lex_file_position();
+    if (lex_is_in_expression()) {
+        tmp_token.between_brackets = buffer_ptr(lex_process->parentheses_buffer);
+    }
     return &tmp_token;
 }
 
@@ -115,15 +130,35 @@ unsigned long long read_number() {
     return atoll(s);
 }
 
+int lexer_number_type(char c) {
+    int res = NUMBER_TYPE_NORMAl;
+    if (c == 'L') {
+        res = NUMBER_TYPE_LONG;
+    } else if (c == 'f') {
+        res = NUMBER_TYPE_FLOAT;
+    } else if (c == 'l') {
+        res = NUMBER_TYPE_LONG;
+    } else if (c == 'd') {
+        res = NUMBER_TYPE_DOUBLE;
+    }
+    return res;
+}
+
+
 /**
  * 创建一个数字token结构体
  * @param number
  * @return 创建好的token结构体
  */
 struct token *token_make_number_for_value(unsigned long number) {
+    int number_type = lexer_number_type(peekc());
+    if (number_type != NUMBER_TYPE_NORMAl) {
+        nextc();
+    }
     return token_create(&(struct token) {
             .type = TOKEN_TYPE_NUMBER,
-            .llnum = number
+            .llnum = number,
+            .num.type = number_type
     });
 }
 
@@ -392,7 +427,7 @@ static struct token *token_make_operator_or_string() {
 
 struct token *token_make_one_line_comment() {
     struct buffer *buffer = buffer_create();
-    char c = 0;
+    char c;
     LEX_GETC_IF(buffer, c, c != '\n' && c != EOF);
     buffer_write(buffer, 0x00);
     return token_create(&(struct token) {
@@ -460,7 +495,7 @@ static struct token *token_make_symbol() {
 
 static struct token *token_make_identifier_or_keyword() {
     struct buffer *buffer = buffer_create();
-    char c = 0;
+    char c;
     LEX_GETC_IF(buffer, c, (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_');
     buffer_write(buffer, 0x00);
     if (is_keyword(buffer_ptr(buffer))) {
@@ -499,6 +534,136 @@ struct token *token_make_newline() {
     });
 }
 
+char lex_get_escaped_char(char c) {
+    char co = 0;
+    switch (c) {
+        case 'n':
+            co = '\n';
+            break;
+        case 't':
+            co = '\t';
+            break;
+        case 'r':
+            co = '\r';
+            break;
+        case '\\':
+            co = '\\';
+            break;
+        case '\'':
+            co = '\'';
+            break;
+    }
+    return co;
+}
+
+/**
+ * 弹出一个token
+ */
+void lexer_pop_token() {
+    vector_pop(lex_process->token_vec);
+}
+
+
+bool is_hex_char(char c) {
+    c = tolower(c);
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+}
+
+/**
+ * 检测字符是否是十六进制字符，并返回这个字符串
+ * @return
+ */
+const char *read_hex_number_str() {
+    struct buffer *buffer = buffer_create();
+    char c = peekc();
+    LEX_GETC_IF(buffer, c, is_hex_char(c));
+    buffer_write(buffer, 0x00);
+    return buffer_ptr(buffer);
+}
+
+
+/**
+ * 创建一个特殊的十六进制数字token结构体
+ * @return
+ */
+
+struct token *token_make_special_number_hexadecimal() {
+    // Skip x
+    nextc();
+
+    unsigned long number = 0;
+    const char *number_str = read_hex_number_str();
+    number = strtol(number_str, 0, 16);
+    return token_make_number_for_value(number);
+}
+
+
+const char *read_bin_number_str() {
+    struct buffer *buffer = buffer_create();
+    char c = peekc();
+    LEX_GETC_IF(buffer, c, c == '0' || c == '1');
+    buffer_write(buffer, 0x00);
+    return buffer_ptr(buffer);
+}
+
+void lexer_validate_binary_string(const char *str) {
+    size_t len = strlen(str);
+    for (int i = 0; i < len; i++) {
+        if (str[i] != '0' && str[i] != '1') {
+            compiler_error(lex_process->compiler, "Invalid binary string\n");
+        }
+    }
+}
+
+
+struct token *token_make_special_number_binary() {
+    // Skip b
+    nextc();
+
+    unsigned long number = 0;
+    const char *number_str = read_number_str();
+    lexer_validate_binary_string(number_str);
+    number = strtol(number_str, 0, 2);
+    return token_make_number_for_value(number);
+}
+
+
+struct token *token_make_special_number() {
+    struct token *token = NULL;
+    struct token *last_token = lexer_last_token();
+    if (!last_token || !(last_token->type == TOKEN_TYPE_NUMBER && last_token->llnum == 0)) {
+        return token_make_identifier_or_keyword();
+    }
+    lexer_pop_token();
+    char c = peekc();
+    if (c == 'x') {
+        token = token_make_special_number_hexadecimal();
+    } else if (c == 'b') {
+        token = token_make_special_number_binary();
+    }
+    return token;
+}
+
+/**
+ * 创建一个引号token结构体
+ * @return
+ */
+struct token *token_make_quote() {
+    assert_next_char('\'');
+    char c = nextc();
+    if (c == '\\') {
+        c = nextc();
+        c = lex_get_escaped_char(c);
+    }
+    if (nextc() != '\'') {
+        compiler_error(lex_process->compiler, "You opened a quote, but did not close it.\n");
+    }
+
+    return token_create(&(struct token) {
+            .type = TOKEN_TYPE_NUMBER,
+            .cval = c
+    });
+}
 
 /**
  * 从文件中读取下一个token
@@ -526,10 +691,16 @@ struct token *read_next_token() {
             // 读取到了符号
             token = token_make_symbol();
             break;
-
+        case 'b':
+        case 'x':
+            token = token_make_special_number();
+            break;
         case '"':
             // 读取到了字符串开始
             token = token_make_string('"', '"');
+            break;
+        case '\'':
+            token = token_make_quote();
             break;
 
         case ' ':
@@ -559,6 +730,7 @@ struct token *read_next_token() {
 int lex(struct lex_process *process) {
     process->current_expression_count = 0;
     process->parentheses_buffer = NULL;
+    // 括号缓冲区
     lex_process = process;
     process->pos.filename = process->compiler->cfile.abs_path;
 
@@ -568,4 +740,39 @@ int lex(struct lex_process *process) {
         token = read_next_token();
     }
     return LEXICAL_ANALYSIS_ALL_OK;
+}
+
+char lexer_string_buffer_next_char(struct lex_process *process) {
+    struct buffer *buf = lex_process_private(process);
+    return buffer_read(buf);
+}
+
+char lexer_string_buffer_peek_char(struct lex_process *process) {
+    struct buffer *buf = lex_process_private(process);
+    return buffer_peek(buf);
+}
+
+void lexer_string_buffer_push_char(struct lex_process *process, char c) {
+    struct buffer *buf = lex_process_private(process);
+    buffer_write(buf, c);
+}
+
+struct lex_process_functions lexer_string_buffer_functions = {
+        .next_char = lexer_string_buffer_next_char,
+        .peek_char = lexer_string_buffer_peek_char,
+        .push_char = lexer_string_buffer_push_char
+};
+
+
+struct lex_process *token_build_for_string(struct compile_process *compiler, const char *str) {
+    struct buffer *buffer = buffer_create();
+    buffer_printf(buffer, str);
+    struct lex_process *lex_process = lex_process_create(compiler, &lexer_string_buffer_functions, buffer);
+    if (!lex_process) {
+        return NULL;
+    }
+    if (lex(lex_process) != LEXICAL_ANALYSIS_ALL_OK) {
+        return NULL;
+    }
+    return lex_process;
 }

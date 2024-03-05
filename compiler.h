@@ -103,6 +103,14 @@ enum
     TOKEN_TYPE_NEWLINE
 };
 
+enum
+{
+    NUMBER_TYPE_NORMAl,
+    NUMBER_TYPE_FLOAT,
+    NUMBER_TYPE_LONG,
+    NUMBER_TYPE_DOUBLE
+};
+
 /**
  * token结构体
  * type: token的类型
@@ -133,6 +141,11 @@ struct token
         void* any;
     };
 
+
+    struct token_number
+    {
+        int type;
+    } num;
     // token之间的空格
     bool whitespace;
 
@@ -222,6 +235,8 @@ struct compile_process
         const char* abs_path;
     } cfile;
 
+    struct vector* token_vec;
+    // 词法分析得到的token向量
     FILE* ofile;
 };
 
@@ -260,6 +275,14 @@ int lex(struct lex_process* process);
 /***********************************************************************************************************************
  * token函数声明
  **********************************************************************************************************************/
+/**
+ * @brief 为输入的字符串构建token
+ * @param compiler
+ * @param str
+ * @return struct lex_process*
+ */
+struct lex_process* token_build_for_string(struct compile_process* compiler, const char* str);
+
 bool token_is_keyword(struct token* token, const char* value);
 
 #endif //KCOMPILER_COMPILER_H
